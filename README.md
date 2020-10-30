@@ -334,7 +334,7 @@ In this Workshop you will practice how to migrate your MongoDB databases to Amaz
 
 1.  ## 🔬 Testing the solution
 
-    Navigate to DMS task, under `Table Statistics` You should be able observe that the dms has copied the data from mongodb to documentdb. You can connect to documentdb and test the records using the same commands that we used with mongodb earlier.
+    Navigate to DMS task, under `Table Statistics` You should be able observe that the dms has copied the data from mongodb to dynamodb. You can connect to dynamodb and test the records using the same commands that we used with mongodb earlier.
 
     _Additional Learnings:_ You can check the logs in cloudwatch for more information or increase the logging level of the database migration task.
 
