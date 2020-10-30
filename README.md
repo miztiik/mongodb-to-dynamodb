@@ -50,9 +50,9 @@ We will follow an multi-stage process to accomplish our goal. We need the follow
    - Endpoints
    - Database Migration Tasks
 
-![Miztiik Automation: Database Migration - MongoDB to Amazon DynamoDB](images/miztiik_architecture_mysql_to_rds_sql_db_01.png)
+![Miztiik Automation: Database Migration - MongoDB to Amazon DynamoDB](images/miztiik_architecture_mongo_to_dynamo_db_01.png)
 
-In this article, we will build an architecture, similar to the one shown above - A simple mongo instance running on EC2 _(You are welcome to use your own mongodb instead_). For target we will build a Amazon DynamoDB cluster and use DMS to migrate the data.
+In this article, we will build an architecture, similar to the one shown above - A simple mongo instance running on EC2 _(You are welcome to use your own mongodb instead_). For target we will build a Amazon DynamoDB and use DMS to migrate the data.
 
 In this Workshop you will practice how to migrate your MongoDB databases to Amazon DynamoDB using different strategies.
 
@@ -132,6 +132,7 @@ In this Workshop you will practice how to migrate your MongoDB databases to Amaz
          - `AmazonDMSVPCManagementRole`
          - `AmazonDMSCloudWatchLogsRole`
          - Role `dms-dynamodb-role` to interact with DynamoDB Service
+           - As this is a demo, I have given full permissions for Dynamo - Consider restricting the permissions for _production_ use.
       1. SSH KeyPair using a custom cfn resource
          - _This resource is currently not used. The intial idea was to use the SSH Keypair to administer the source mongodb on EC2. [SSM Session Manager](https://www.youtube.com/watch?v=-ASMtZBrx-k) does the same job admirably._
 
@@ -151,8 +152,7 @@ In this Workshop you will practice how to migrate your MongoDB databases to Amaz
       1. Instance IAM Role is configured to allow SSM Session Manager connections(_No more SSH key pairs_)
       1. Instance is bootstrapped using `user_data` script to install `Mongodb 4.x`
       1. Create user `mongodbadmin` & password (_We will need this later for inserts and DMS_)
-      1. Creates a table `miztiik_db`(\_Later we will add a collection `customers`, `loyalty` & `airlines`)
-
+      1. Creates a table `miztiik_db`(_Later we will add a collection `customers`, `loyalty` & `airlines`_)
          - We will _only_ use the `airlines` collection for our migration
 
       Initiate the deployment with the following command,
@@ -217,7 +217,7 @@ In this Workshop you will practice how to migrate your MongoDB databases to Amaz
 
     Couple of things to note: Based on the example query patterns described by Miztiik Crop, We will use a composite primary key for the target DynamoDB table. Use a composite **primary key** with a partition key that is a combination of the same fields as in the MongoDB shard key (the `Origin` and `Year` attributes), and a **sort key** that is a combination of the `DayofMonth` (day of travel), `Month`, `CRSDepTime` (scheduled departure time), `UniqueCarrier` and `FlightNum` attributes.
 
-    - Name your table as `airlines` - We will use this later in DMS task
+    - Name your table as `airlinedata` - We will use this later in DMS task
     - For _Primary Key_: Choose type `String` with value `depCityByYear`
     - For _Sort Key_: Choose type `String` with value `depTimeByFlightNum`
     - Set your Write/READ capacity units(WCU & RCUs) at a level your application needs.
@@ -242,59 +242,93 @@ In this Workshop you will practice how to migrate your MongoDB databases to Amaz
       - Update user as `mongodbadmin`, the password `Som3thingSh0uldBe1nVault`
       - Authentication source as `admin`
       - Database name `miztiik_db`
+      - **NOTE - Metadata mode: `table`**
+      - Number of documents to scan - `1000`
       - Choose our custom VPC `miztiikMigrationVpc` and choose the DMS Replication instance we create in the previous step
-    - **Endpoint for destination databases - DocumentDB**(_custom values listed below_)
+    - **Endpoint for destination databases - DynamodbDB**(_custom values listed below_)
       - Choose `DynamoDB` as target
-      - For server name use the dnsname from docsdb, here is my example,
-        - `docsdb.cluster-konstone.us-weast-2.docdb.amazonaws.com`
+      - Add the `dms-dynamodb-role` role ARN created by **Stack: database-migration-prerequisite-stack**. You can also find the ARN in the ouputs section of the stack.
       - Ensure you choose SSL verification `verify-full` and upload CA certificate for the Amazon DocumentDB public key we downloaded earlier
-      - Database name `miztiik_db`
-      - Choose our custom VPC `miztiikMigrationVpc` and choose the DMS Replication instance we create in the previous step
-    - Database Migration Task
-      - Choose our replication instance, source & destination endpoints
-      - - For Migration Type, choose `Migrate Existing Data and replicate ongoing changes`
-      - For Table Mappings, _Add new selection rule_, you can create a custom schema name and leave `%` for the table name and Action `Include`
-      - Create Task
-
-1.  ## 🚀 Deploying the DMS Replication Instance
-
-    We can leverage the excellant [documentation from AWS](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_GettingStarted.html) on how to setup our DMS Replication Instance.
-
-    Couple of things to note,
-
-    - For VPC - Use our custom VPC `miztiikMigrationVpc`
-    - For Security Group - Use `dms_sg_database-migration-prerequisite-stack`
-
-    After creating the replication instance, We need to create few more resources to begin our replication. We will use defaults mostly
-
-    - **Endpoints for source MySQLDB**(_custom values listed below_)
-      - Source choose mysqldb
-      - For server address provide the private ip of the ec2 instance
-      - Update username as `mysqladmin`, the password `Som3thingSh0uldBe1nVault`
-      - Choose our custom VPC `miztiikMigrationVpc` and choose the DMS Replication instance we create in the previous step
-    - **Endpoint for destination databases - RDS MySQL DB**(_custom values listed below_)
-      - Choose Target endpoint
-      - Check `Select RDS DB Instance`
-      - Choose your RDS instance from the drop down list
-      - Verify all the details of your RDS Instance
       - Choose our custom VPC `miztiikMigrationVpc` and choose the DMS Replication instance we create in the previous step
     - **Database Migration Task**
       - Choose our replication instance, source & destination endpoints
+      - For Target table preparation mode, choose `Do nothing` so that existing data and metadata of the target DynamoDB table are not affected. If the target DynamoDB table does not exist, the migration task creates a new table; otherwise, it appends data to an existing table
       - For Migration Type, choose `Migrate Existing Data and replicate ongoing changes`
-      - Task Settings
-        - Enable Validation
-        - Enable CloudWatch Logs
-      - For Table Mappings, _Add new selection rule_, you can create a custom schema name
-        - For _Schema name_ write `miztiik_db`
-        - For _Table name_ write `customers`
-        - and Action `Include`
+      - Enable `CloudWatch Logs`
+      - For Table Mappings, Select **JSON editor**
+        - Use the file `dms_mongo_to_dynamob_table_mapping_rules.json` contents and paste it there.(_Sample shown below_)
+        - We will use the table mapping feature to create _composite primary key_ with a partition key that is a combination of the same fields as in the MongoDB (the `Origin` and `Year` attributes), and a _sort key_ that is a combination of the `DayofMonth` (day of travel), `Month`, `CRSDepTime` (scheduled departure time), `UniqueCarrier` and `FlightNum` attributes. You can read more about table mapping here[6]
+        - We will also drop (_exlcude_ two fields `CancellationCode` & `Diverted`)
+        ```json
+        {
+          "rules": [
+            {
+              "rule-type": "selection",
+              "rule-id": "1",
+              "rule-name": "1",
+              "object-locator": {
+                "schema-name": "miztiik_db",
+                "table-name": "airlines"
+              },
+              "rule-action": "include"
+            },
+            {
+              "rule-type": "object-mapping",
+              "rule-id": "2",
+              "rule-name": "2",
+              "rule-action": "map-record-to-record",
+              "object-locator": {
+                "schema-name": "miztiik_db",
+                "table-name": "airlines"
+              },
+              "target-table-name": "airlinedata",
+              "mapping-parameters": {
+                "partition-key-name": "depCityByYear",
+                "sort-key-name": "depTimeByFlightNum",
+                "exclude-columns": ["CancellationCode", "Diverted"],
+                "attribute-mappings": [
+                  {
+                    "target-attribute-name": "depCityByYear",
+                    "attribute-type": "scalar",
+                    "attribute-sub-type": "string",
+                    "value": "${Origin}-${Year}"
+                  },
+                  {
+                    "target-attribute-name": "depTimeByFlightNum",
+                    "attribute-type": "scalar",
+                    "attribute-sub-type": "string",
+                    "value": "${DayofMonth}-${Month}:${CRSDepTime}|${UniqueCarrier}-${FlightNum}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        ```
       - Create Task
 
 1.  ## 🔬 Testing the solution
 
     Navigate to DMS task, under `Table Statistics` You should be able observe that the dms has copied the data from source to target database. You can connect to RDS MySQL DB and test the records using the same commands that we used with source earlier.
 
-    ![Miztiik Automation: Database Migration - MySQLDB to Amazon RDS MySQL DB](images/miztiik_architecture_mysql_to_rds_sql_db_03.png)
+    The `insert_records_to_mongodb.py` is available to you, you can modify it to make additional inserts, upserts, deletes etc., and observe if DMS CDC capture those changes correctly. Here is a snapshot of the status after deleting records where `Dest` is `LUX` in mongodb and some inserts were made.
+
+    ```bash
+    cd /var/log/mongodb-to-dynamodb/mongodb_to_dynamodb/stacks/back_end/bootstrap_scripts
+    python3 insert_records_to_mongodb.py
+    mongo
+    use miztiik_db;
+    try {
+      db.airlines.deleteMany( { "Dest" : "LUX" } );
+    } catch (e) {
+      print (e);
+    }
+    ```
+
+    ![Miztiik Automation: Database Migration - MongoDB to Amazon DynamoDB](images/miztiik_architecture_mongo_to_dynamo_db_02.png)
+
+    In DynamoDB you can check the items,
+    ![Miztiik Automation: Database Migration - MongoDB to Amazon DynamoDB](images/miztiik_architecture_mongo_to_dynamo_db_03.png)
 
     _Additional Learnings:_ You can check the logs in cloudwatch for more information or increase the logging level of the database migration task.
 
@@ -310,7 +344,8 @@ In this Workshop you will practice how to migrate your MongoDB databases to Amaz
 
 1.  ## 🎯 Additional Exercises
 
-    - If your mongo database is small in size, you try to migrate using `mongodump` and `mongorestore`. You can refer to this documentation[7]
+    - Explore how you can migrate sharded mongodb clusters
+    - or Check how you can add a validation step to the migration process, as it not supported natively(as on Q4 2020)
 
 1)  ## 🧹 CleanUp
 
@@ -356,7 +391,7 @@ Thank you for your interest in contributing to our project. Whether it's a bug r
 
 1. [Setup MongoDB for public access][4]
 
-1. [Pymongo Insert][5]
+1. [AWS Docs][5]
 
 1. [Pymongo Insert][6]
 
@@ -370,9 +405,8 @@ Thank you for your interest in contributing to our project. Whether it's a bug r
 [2]: https://www.mongodb.com/basics/create-database
 [3]: https://www.guru99.com/working-mongodb-indexes.html
 [4]: https://ianlondon.github.io/blog/mongodb-auth/
-[5]: https://pythonexamples.org/python-mongodb-insert-document/
-[6]: https://www.codespeedy.com/create-collections-and-insert-data-to-collection-in-mongodb-python/
-[7]: https://github.com/miztiik/aws-real-time-use-cases/tree/master/200-Storage-Migrate-To-DocumentDB
+[5]: https://aws.amazon.com/blogs/database/performing-a-live-migration-from-a-mongodb-cluster-to-amazon-dynamodb/
+[6]: https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Target.DynamoDB.html
 [100]: https://www.udemy.com/course/aws-cloud-security/?referralCode=B7F1B6C78B45ADAF77A9
 [101]: https://www.udemy.com/course/aws-cloud-security-proactive-way/?referralCode=71DC542AD4481309A441
 [102]: https://www.udemy.com/course/aws-cloud-development-kit-from-beginner-to-professional/?referralCode=E15D7FB64E417C547579
