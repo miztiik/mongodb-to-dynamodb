@@ -1,0 +1,47 @@
+{
+    "rules": [
+        {
+            "rule-type": "selection",
+            "rule-id": "1",
+            "rule-name": "1",
+            "object-locator": {
+                "schema-name": "miztiik_db",
+                "table-name": "airlines"
+            },
+            "rule-action": "include"
+        },
+        {
+            "rule-type": "object-mapping",
+            "rule-id": "2",
+            "rule-name": "2",
+            "rule-action": "map-record-to-record",
+            "object-locator": {
+                "schema-name": "miztiik_db",
+                "table-name": "airlines"
+            },
+            "target-table-name": "airlinedata",
+            "mapping-parameters": {
+                "partition-key-name": "depCityByYear",
+                "sort-key-name": "depTimeByFlightNum",
+                "exclude-columns": [
+                    "CancellationCode",
+                    "Diverted"
+                ],
+                "attribute-mappings": [
+                    {
+                        "target-attribute-name": "depCityByYear",
+                        "attribute-type": "scalar",
+                        "attribute-sub-type": "string",
+                        "value": "${Origin}-${Year}"
+                    },
+                    {
+                        "target-attribute-name": "depTimeByFlightNum",
+                        "attribute-type": "scalar",
+                        "attribute-sub-type": "string",
+                        "value": "${DayofMonth}-${Month}:${CRSDepTime}|${UniqueCarrier}-${FlightNum}"
+                    }
+                ]
+            }
+        }
+    ]
+}
